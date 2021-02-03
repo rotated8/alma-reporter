@@ -7,7 +7,7 @@ Install the required gems with bundle
 
 `bundle install`
 
-If needed, start a solr instance (you may want to use a separate terminal for this)
+If needed, start a Solr instance (you may want to use a separate terminal for this)
 
 `bundle exec solr_wrapper`
 
@@ -37,7 +37,7 @@ permanent Solr at http://example.com/solr/sunspot-core, you could run
 ## Mapping MARC to Solr
 Example Solr fields could be `f_001_isi`, `d_040_ssim`, `i_028_ind2_ssim`, or `s_040_a_isi`.
 
-The pieces of a field name between the underscores each have some meaning starting with the prefix.
+The pieces of a fieldname between the underscores each have some meaning starting with the prefix.
 
 ### Prefix Piece
 Prefixes come in five flavors:
@@ -48,7 +48,7 @@ Prefixes come in five flavors:
 - `i_` fields are for indicators, and contain the non-empty values for that indicator.
 
 ### MARC Field Piece
-The next piece is the field name from the MARC record.
+The next piece is the fieldname from the MARC record.
 
 ### Subfield and Indicator Piece
 `s_` and `i_` Solr fields have an extra piece here. For `i_` fields, it is either `ind1` or `ind2`,
@@ -56,12 +56,12 @@ corresponding to which indicator they describe. For `s_` fields, this piece is t
 
 ### Suffix Piece
 Finally, each field has a suffix: either `_isi` or `_ssim`. Generally, if the suffix is `_isi`, the Solr field
-is a count of how many times a field was found in the MARC record, or the number of values that field
-contained. If the suffix is `_ssim`, the Solr field contains the values from the MARC field.
+is a count of how many times a field was found in the MARC record. If the suffix is `_ssim`, the Solr field
+contains the values from the MARC field.
 
 With suffixes, there are some caveats:
-- There are no `f_*_ssim` fields, as the data there is present in other places.
-- There are no `c_*_isi` fields, as that data is in the `f_` fields
+- There are no `f_*_ssim` fields, as the data there is present in other places (`c_*_ssim` or `s_*_ssim` fields).
+- There are no `c_*_isi` fields, as that data would match the `f_` fields
 - `d_*_ssim` fields only contain unique elements, rather than all the subfield codes.
 - `d_*_isi` fields do count the total number of times the subfields appeared.
 
@@ -74,9 +74,9 @@ know that, for a single MARC record or Solr document
 - `s_040_a_isi` counts how many times the 040$a subfield occurred.
 
 ### Unique fields
-Additionally, each document contains some other fields: `id`, which should be the same as the `c_001_ssim`
-field, and `l_ldr_ssim` and `l_ldr_isi`. `l_ldr_ssim` contains the value of the leader, and `l_ldr_isi` counts
-the number of times a leader was found, for completeness.
+Additionally, each document contains some other fields. `id`, which should be the same as the `c_001_ssim` field.
+`l_ldr_ssim` contains the value of the leader, and `l_ldr_isi` counts the number of times a leader was found, for
+completeness.
 
 If the `load.rb`  script is rewritten, it can also populate the `raw_tsi` Solr field with the raw MARC record.
 
