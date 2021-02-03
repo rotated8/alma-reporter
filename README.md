@@ -68,7 +68,7 @@ With suffixes, there are some caveats:
 ### Examples
 Using the example fields from above (`f_001_isi`, `d_040_ssim`, `i_028_ind2_ssim`, or `s_040_a_isi`), we now
 know that, for a single MARC record or Solr document
-- `f_001_isi` counts how many time the 001 field appeared
+- `f_001_isi` counts how many times the 001 field appeared
 - `d_040_ssim` contains all the unique subfield codes for the 040 field
 - `i_028_ind2_ssim` contains all the non-empty, non-unique values for the second indicator for the 028 field
 - `s_040_a_isi` counts how many times the 040$a subfield occurred.
@@ -83,3 +83,5 @@ If the `load.rb`  script is rewritten, it can also populate the `raw_tsi` Solr f
 ## Reporting
 The report takes all the different `_isi` fields, and produces two statistics for each: how many MARC records
 (or Solr documents) have that field, and how many occurances of that field exist across all the records.
+
+WARNING! Rerunning the report script with overwrite the data.csv file.
