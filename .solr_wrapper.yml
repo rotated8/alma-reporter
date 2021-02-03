@@ -1,0 +1,7 @@
+# Place any default configuration for solr_wrapper here
+version: 7.7.3
+instance_dir: ./alma-solr
+collection:
+  persist: true
+  dir: ./conf/
+  name: alma-data-core
