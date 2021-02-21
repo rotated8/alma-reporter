@@ -79,32 +79,38 @@ loop do
       end
 
       for field in record.fields
+        # Strip non-alphanumeric characters from the tag. Solr can't handle them in fieldnames.
+        solr_tag = field.tag.gsub(/[^A-z0-9]/, '_')
+
         # Always count the field as present.
-        doc_counts["f_#{field.tag}_isi"] += 1 if COUNTS
+        doc_counts["f_#{solr_tag}_isi"] += 1 if COUNTS
 
         if MARC::ControlField.control_tag?(field.tag)
           # Control field, so add the value. No indicators, subfields.
-          doc_values["c_#{field.tag}_ssim"] << field.value if VALUES
+          doc_values["c_#{solr_tag}_ssim"] << field.value if VALUES
         else
           # Store the unique subfield codes in the this field
-          doc_values["d_#{field.tag}_ssim"] = field.codes if VALUES
-          doc_counts["d_#{field.tag}_isi"] += field.codes(dedup=false).count if COUNTS
+          doc_values["d_#{solr_tag}_ssim"] = field.codes if VALUES
+          doc_counts["d_#{solr_tag}_isi"] += field.codes(dedup=false).count if COUNTS
 
           # Data fields have indicators and subfields
           if !field.indicator1.strip.empty?
-            doc_values["i_#{field.tag}_ind1_ssim"] << field.indicator1 if VALUES
-            doc_counts["i_#{field.tag}_ind1_isi"] += 1 if COUNTS
+            doc_values["i_#{solr_tag}_ind1_ssim"] << field.indicator1 if VALUES
+            doc_counts["i_#{solr_tag}_ind1_isi"] += 1 if COUNTS
           end
 
           if !field.indicator2.strip.empty?
-            doc_values["i_#{field.tag}_ind2_ssim"] << field.indicator2 if VALUES
-            doc_counts["i_#{field.tag}_ind2_isi"] += 1 if COUNTS
+            doc_values["i_#{solr_tag}_ind2_ssim"] << field.indicator2 if VALUES
+            doc_counts["i_#{solr_tag}_ind2_isi"] += 1 if COUNTS
           end
 
           # Subfields have the actual data.
           for subfield in field.subfields
-            doc_values["s_#{field.tag}_#{subfield.code}_ssim"] << subfield.value if VALUES
-            doc_counts["s_#{field.tag}_#{subfield.code}_isi"] += 1 if COUNTS
+            # Strip non-alphanumeric characters from the subfield code, for Solr.
+            solr_code = subfield.code.gsub(/[^A-z0-9]/, '_')
+
+            doc_values["s_#{solr_tag}_#{solr_code}_ssim"] << subfield.value if VALUES
+            doc_counts["s_#{solr_tag}_#{solr_code}_isi"] += 1 if COUNTS
           end
         end
       end
