@@ -39,9 +39,8 @@ loop do
   deleted_records = document.xpath('/oai:OAI-PMH/oai:ListRecords/oai:record[oai:header/@status="deleted"]', NAMESPACE)
   if deleted_records.count.positive?
     deleted_ids = deleted_records.map { |record| record.at('header/identifier').text.split(':').last }
-    puts "!!! deleted_ids"
+    # Remove deleted-status records from the indexing set, and delete them from Solr.
     deleted_records.remove
-    # !!! UNTESTED
     solr.delete_by_id(deleted_ids)
     solr.commit
   end
