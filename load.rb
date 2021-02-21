@@ -115,6 +115,7 @@ loop do
         end
       end
 
+      # Store the whole MARC record, if required
       doc_values["raw_tsi"] = record.to_s if RAW_MARC
 
       doc_values.merge!(doc_counts) if COUNTS
