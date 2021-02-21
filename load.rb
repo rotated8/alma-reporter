@@ -90,7 +90,7 @@ loop do
           doc_values["c_#{solr_tag}_ssim"] << field.value if VALUES
         else
           # Store the unique subfield codes in the this field
-          doc_values["d_#{solr_tag}_ssim"] = field.codes if VALUES
+          doc_values["d_#{solr_tag}_ssim"].concat(field.codes).uniq! if VALUES
           doc_counts["d_#{solr_tag}_isi"] += field.codes(dedup=false).count if COUNTS
 
           # Data fields have indicators and subfields
