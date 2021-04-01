@@ -84,4 +84,4 @@ If the `load.rb`  script is rewritten, it can also populate the `raw_tsi` Solr f
 The report takes all the different `_isi` fields, and produces two statistics for each: how many MARC records
 (or Solr documents) have that field, and how many occurances of that field exist across all the records.
 
-WARNING! Rerunning the report script with overwrite the data.csv file.
+WARNING! Rerunning the report script will overwrite the data.csv file.
