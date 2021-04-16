@@ -7,6 +7,10 @@ Install the required gems with bundle
 
 `bundle install`
 
+Don't need the solr\_wrapper dependency?
+
+`bundle install --without=development`
+
 If needed, start a Solr instance (you may want to use a separate terminal for this)
 
 `bundle exec solr_wrapper`
