@@ -24,6 +24,20 @@ SOLR_URL = ENV['SOLR_URL'] || 'http://127.0.0.1:8983/solr/alma-data-core'
 identifier = 0
 
 ################### SETUP
+# Setup Faraday to retry Alma connection errors.
+# c.f https://www.rubydoc.info/github/lostisland/faraday/Faraday/Request/Retry
+retry_options = {
+  max: 3,
+  interval: 0.5,
+  interval_randomness: 0.5,
+  backoff_factor: 2,
+  retry_block: -> (env, options, retries, exc) { puts '!!! Retrying OAI request. Alma timed out.' }
+}
+oai_conn = Faraday.new do |conn|
+  conn.request(:retry, retry_options)
+  conn.adapter(:net_http)
+end
+
 # With nokogiri required above, this should force XMLReader to use it.
 MARC::XMLReader.best_available!
 
@@ -33,7 +47,7 @@ loop do
   ################# GET RECORDS
   puts "@ #{Time.now}"
   puts '@ getting records'
-  oai_response = Faraday.get("#{OAI_BASE}#{qs}")
+  oai_response = oai_conn.get("#{OAI_BASE}#{qs}")
   document = Nokogiri::XML::Document.parse(oai_response.body)
 
   deleted_records = document.xpath('/oai:OAI-PMH/oai:ListRecords/oai:record[oai:header/@status="deleted"]', NAMESPACE)
