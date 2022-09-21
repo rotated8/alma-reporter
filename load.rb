@@ -1,8 +1,15 @@
 # frozen_string_literal:true
 require 'faraday'
+require 'faraday/retry'
+require 'logger'
 require 'marc'
 require 'nokogiri'
 require 'rsolr'
+
+################### LOGGING SETUP
+log = Logger.new('./import.log')
+log.level = Logger::INFO
+log.info('Starting')
 
 ################### ALMA CONSTANTS
 ALMA = 'na03'
@@ -20,34 +27,57 @@ VALUES   = true
 RAW_MARC = false
 SOLR_URL = ENV['SOLR_URL'] || 'http://127.0.0.1:8983/solr/alma-data-core'
 
-# Global counter for missing identifiers, for Solr.
-identifier = 0
+# Fallback identifier used if we encounter issues. Increments for each issue found.
+backup_identifier = 0
+# Counts the records sent to Solr.
+total_docs = 0
 
 ################### SETUP
-# Setup Faraday to retry Alma connection errors.
-# c.f https://www.rubydoc.info/github/lostisland/faraday/Faraday/Request/Retry
-retry_options = {
-  max: 3,
-  interval: 0.5,
-  interval_randomness: 0.5,
-  backoff_factor: 2,
-  retry_block: -> (env, options, retries, exc) { puts '!!! Retrying OAI request. Alma timed out.' }
-}
-oai_conn = Faraday.new do |conn|
-  conn.request(:retry, retry_options)
-  conn.adapter(:net_http)
-end
-
 # With nokogiri required above, this should force XMLReader to use it.
 MARC::XMLReader.best_available!
 
-solr = RSolr.connect(url: SOLR_URL)
+# Setup Faraday to retry Alma connection errors. https://github.com/lostisland/faraday-retry
+oai_retry_options = {
+  max: 3,
+  interval: 2,
+  interval_randomness: 0.9,
+  backoff_factor: 2,
+  exceptions: [Errno::ETIMEDOUT, Timeout::Error, Faraday::TimeoutError, Faraday::ConnectionFailed, Net::ReadTimeout],
+  retry_block: -> (env:, options:, retry_count:, exception:, will_retry_in:) { log.error("Retrying OAI request. #{exception}") }
+}
+oai_conn = Faraday.new do |conn|
+  conn.request(:retry, oai_retry_options)
+  # You ought to verify SSL for your OAI source, but I won't tell if you don't.
+  # conn.ssl.verify = false
+end
+
+# Setup Faraday to retry for Solr connection errors, too.
+solr_retry_options = {
+  max: 3,
+  interval: 12,
+  interval_randomness: 0.9,
+  backoff_factor: 5,
+  methods: %i[get post],
+  exceptions: [Errno::ETIMEDOUT, Timeout::Error, Faraday::TimeoutError, Faraday::ConnectionFailed, Net::ReadTimeout, RSolr::Error::Timeout],
+  retry_block: -> (env:, options:, retry_count:, exception:, will_retry_in:) { log.error("Retrying Solr commit. #{exception}") }
+}
+solr_conn = Faraday.new do |conn|
+  conn.request(:retry, solr_retry_options)
+  # Self-signed or expired cert? Uncomment the line below.
+  # conn.ssl.verify = false
+end
+solr = RSolr.connect(solr_conn, url: SOLR_URL)
 
 loop do
   ################# GET RECORDS
-  puts "@ #{Time.now}"
-  puts '@ getting records'
-  oai_response = oai_conn.get("#{OAI_BASE}#{qs}")
+  log.debug('Getting records from OAI')
+  begin
+    oai_response = oai_conn.get("#{OAI_BASE}#{qs}")
+  rescue => err
+    log.fatal("Error retrieving OAI data: #{err}")
+    log.close
+    raise
+  end
   document = Nokogiri::XML::Document.parse(oai_response.body)
 
   deleted_records = document.xpath('/oai:OAI-PMH/oai:ListRecords/oai:record[oai:header/@status="deleted"]', NAMESPACE)
@@ -55,12 +85,19 @@ loop do
     deleted_ids = deleted_records.map { |record| record.at('header/identifier').text.split(':').last }
     # Remove deleted-status records from the indexing set, and delete them from Solr.
     deleted_records.remove
-    solr.delete_by_id(deleted_ids)
-    solr.commit
+    begin
+      solr.delete_by_id(deleted_ids)
+      solr.commit
+    rescue => err
+      log.fatal("Error deleting docs: #{err}")
+      log.close
+      raise
+    end
+    log.info("Deleted records: #{deleted_ids}")
   end
 
   record_count = document.xpath('/oai:OAI-PMH/oai:ListRecords/oai:record', NAMESPACE).count
-  puts "@ #{record_count} records"
+  log.info("#{record_count} records found")
   if record_count.positive?
     ############### INDEX RECORDS
     # Collect each solr doc from this file.
@@ -69,7 +106,7 @@ loop do
     # Rather than writing to disk only to read it right back, let's use StringIO
     reader = MARC::XMLReader.new(StringIO.new(document.to_s))
 
-    puts '@ creating solr docs'
+    log.debug('Creating solr docs')
     for record in reader
       # Perf improvement. Makes the fields immutable.
       record.fields.freeze
@@ -81,10 +118,11 @@ loop do
       if record.fields('001').count == 1
         doc_values['id'] = record.fields('001').first.value
       else
-        # Record has no identifier???
-        puts "!!! missing/multiple 001"
-        doc_values['id'] = identifier
-        identifier += 1
+        # Record does not have one and only one identifier, use our backup to give it a fake one.
+        log.error('Missing/multiple 001 tags')
+        log.info("001s: #{record.fields('001')} mapped to #{backup_identifier}")
+        doc_values['id'] = backup_identifier
+        backup_identifier += 1
       end
 
       if !record.leader.strip.empty?
@@ -136,17 +174,25 @@ loop do
       docs << doc_values
     end
 
-    puts "@ committing solr docs"
-    solr.add(docs)
-    solr.commit
+    # Commit docs to Solr, catch errors.
+    begin
+      solr.add(docs, add_attributes: {commitWithin: 200})
+      # solr.commit # Hard commits can thrash your Solr. Avoid this unless necessary.
+    rescue => err
+      log.fatal("Error committing to Solr: #{err}")
+      log.close
+      raise
+    end
+    total_docs += docs.count
+    log.info("#{docs.count} docs committed to Solr")
   end
 
   resumption_token = document.xpath('/oai:OAI-PMH/oai:ListRecords/oai:resumptionToken', NAMESPACE).text
   break if resumption_token == ''
 
   qs = "?verb=ListRecords&resumptionToken=#{resumption_token}"
-  puts '@ resuming'
+  log.debug('Resuming')
 end
 
-puts '@ finished!'
-puts "@ #{Time.now}"
+log.info("Finished- #{total_docs} docs loaded in total")
+log.close
