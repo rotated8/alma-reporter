@@ -87,7 +87,7 @@ loop do
     deleted_records.remove
     begin
       solr.delete_by_id(deleted_ids)
-      solr.commit
+      solr.soft_commit
     rescue => err
       log.fatal("Error deleting docs: #{err}")
       log.close
@@ -176,7 +176,7 @@ loop do
 
     # Commit docs to Solr, catch errors.
     begin
-      solr.add(docs, add_attributes: {commitWithin: 200})
+      solr.add(docs, add_attributes: {commitWithin: 1000})
       # solr.commit # Hard commits can thrash your Solr. Avoid this unless necessary.
     rescue => err
       log.fatal("Error committing to Solr: #{err}")
