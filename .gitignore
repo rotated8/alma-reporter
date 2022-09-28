@@ -1,2 +1,3 @@
 /alma-solr/*
-data.csv
+report.csv
+import.log

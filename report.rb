@@ -3,6 +3,9 @@ require 'csv'
 require 'faraday'
 require 'rsolr'
 
+# File the report will be saved as.
+REPORT_FILE = './report.csv'
+
 SOLR_URL = ENV['SOLR_URL'] || 'http://127.0.0.1:8983/solr/alma-data-core'
 # Setup the Faraday connection Solr will use.
 solr_conn = Faraday.new() do |conn|
@@ -22,7 +25,7 @@ fields.delete('l_ldr_isi')
 fields.prepend('l_ldr_isi')
 
 headers = ['field', 'docs', 'occurs']
-CSV.open('./data.csv', 'w', write_headers: true, headers: headers) do |csv|
+CSV.open(REPORT_FILE, 'w', write_headers: true, headers: headers) do |csv|
   for field in fields
     # Get count and sum stats for this field.
     resp = solr.get('select', params: { rows: 0, stats: true, 'stats.field': "{!count=true sum=true}#{field}" })

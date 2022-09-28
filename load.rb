@@ -20,7 +20,7 @@ OAI_BASE  = "https://#{ALMA}.alma.exlibrisgroup.com/view/oai/#{INST}/request"
 NAMESPACE = { oai: 'http://www.openarchives.org/OAI/2.0/' }
 qs = "?verb=ListRecords&set=#{SET}&metadataPrefix=marc21"
 
-################### INDEXING CONSTANTS
+################### SOLR CONSTANTS
 # Controls what data gets passed into Solr.
 COUNTS   = true
 VALUES   = true
@@ -33,38 +33,29 @@ backup_identifier = 0
 total_docs = 0
 
 ################### SETUP
-# With nokogiri required above, this should force XMLReader to use it.
-MARC::XMLReader.best_available!
-
-# Setup Faraday to retry Alma connection errors. https://github.com/lostisland/faraday-retry
-oai_retry_options = {
-  max: 3,
-  interval: 2,
-  interval_randomness: 0.9,
-  backoff_factor: 2,
-  exceptions: [Errno::ETIMEDOUT, Timeout::Error, Faraday::TimeoutError, Faraday::ConnectionFailed, Net::ReadTimeout],
-  retry_block: -> (env:, options:, retry_count:, exception:, will_retry_in:) { log.error("Retrying OAI request. #{exception}") }
-}
-oai_conn = Faraday.new do |conn|
-  conn.request(:retry, oai_retry_options)
-  # You ought to verify SSL for your OAI source, but I won't tell if you don't.
-  # conn.ssl.verify = false
-end
-
-# Setup Faraday to retry for Solr connection errors, too.
-solr_retry_options = {
+RETRY_OPTIONS = {
   max: 3,
   interval: 12,
   interval_randomness: 0.9,
   backoff_factor: 5,
   methods: %i[get post],
-  exceptions: [Errno::ETIMEDOUT, Timeout::Error, Faraday::TimeoutError, Faraday::ConnectionFailed, Net::ReadTimeout, RSolr::Error::Timeout],
-  retry_block: -> (env:, options:, retry_count:, exception:, will_retry_in:) { log.error("Retrying Solr commit. #{exception}") }
+  exceptions: [Errno::ETIMEDOUT, Timeout::Error, Faraday::TimeoutError, Faraday::ConnectionFailed, Net::ReadTimeout, RSolr::Error::Timeout]
 }
+
+# With nokogiri required above, this should force XMLReader to use it.
+MARC::XMLReader.best_available!
+
+# Setup Faraday to retry Alma connection errors. https://github.com/lostisland/faraday-retry
+oai_options = RETRY_OPTIONS.merge({ retry_block: -> (env:, opts:, retries:, exc:, retry_in:) { log.error("Retrying OAI request. #{exc}") } })
+oai_conn = Faraday.new do |conn|
+  conn.request(:retry, oai_options)
+end
+
+# Setup Faraday to retry for Solr connection errors, too.
+solr_options = RETRY_OPTIONS.merge({ retry_block: -> (env:, opts:, retries:, exc:, retry_in:) { log.error("Retrying Solr request. #{exc}") } })
 solr_conn = Faraday.new do |conn|
-  conn.request(:retry, solr_retry_options)
-  # Self-signed or expired cert? Uncomment the line below.
-  # conn.ssl.verify = false
+  conn.request(:retry, solr_options)
+  # conn.ssl.verify = false # Self-signed or expired cert? Uncomment this line.
 end
 solr = RSolr.connect(solr_conn, url: SOLR_URL)
 
@@ -133,6 +124,7 @@ loop do
       for field in record.fields
         # Strip non-alphanumeric characters from the tag. Solr can't handle them in fieldnames.
         solr_tag = field.tag.gsub(/[^A-z0-9]/, '_')
+        log.info("Stripped #{field.tag} for #{id}") if solr_tag != field.tag
 
         # Always count the field as present.
         doc_counts["f_#{solr_tag}_isi"] += 1 if COUNTS
@@ -160,6 +152,7 @@ loop do
           for subfield in field.subfields
             # Strip non-alphanumeric characters from the subfield code, for Solr.
             solr_code = subfield.code.gsub(/[^A-z0-9]/, '_')
+            log.info("Stripped #{subfield.code} for #{id}") if solr_code != subfield.code
 
             doc_values["s_#{solr_tag}_#{solr_code}_ssim"] << subfield.value if VALUES
             doc_counts["s_#{solr_tag}_#{solr_code}_isi"] += 1 if COUNTS
@@ -187,6 +180,7 @@ loop do
     log.info("#{docs.count} docs committed to Solr")
   end
 
+  # Grab the resumption token from the OAI response. If there is none, no more records to process.
   resumption_token = document.xpath('/oai:OAI-PMH/oai:ListRecords/oai:resumptionToken', NAMESPACE).text
   break if resumption_token == ''
 
