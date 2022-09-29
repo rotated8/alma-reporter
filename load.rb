@@ -111,7 +111,7 @@ loop do
       else
         # Record does not have one and only one identifier, use our backup to give it a fake one.
         # Remember: all the values are stored in `c_001_ssim`, if you store values.
-        log.error("Missing/multiple 001s: #{backup_identifier} used for #{record.fields('001')}")
+        log.error("Missing/multiple 001s, used #{backup_identifier} instead")
         doc_values['id'] = backup_identifier
         backup_identifier += 1
       end
@@ -125,8 +125,8 @@ loop do
         # Strip non-alphanumeric characters from the tag. Solr can't handle them in fieldnames.
         solr_tag = field.tag.gsub(/[^A-z0-9]/, '_')
         if solr_tag != field.tag
-          log.info("Stripped #{field.tag} for #{doc_values['id']}")
-          doc_values['escaped_tags'] << field.tag if VALUES or COUNTS
+          log.info("Stripped a '#{field.tag}' tag for #{doc_values['id']}")
+          doc_values['escaped_tags_ssim'] << field.tag if VALUES or COUNTS
         end
 
         doc_counts["f_#{solr_tag}_isi"] += 1 if COUNTS # Always count the field as present.
@@ -154,8 +154,8 @@ loop do
             # Strip non-alphanumeric characters from the subfield code, for Solr.
             solr_code = subfield.code.gsub(/[^A-z0-9]/, '_')
             if solr_code != subfield.code
-              log.info("Stripped #{subfield.code} for a #{solr_tag} in #{doc_values['id']}")
-              doc_values['escaped_codes'] << "#{solr_tag}_#{subfield.code}" if VALUES or COUNTS
+              log.info("Stripped a '#{subfield.code}' subfield code for a #{solr_tag} tag in #{doc_values['id']}")
+              doc_values['escaped_codes_ssim'] << "#{solr_tag}_#{subfield.code}" if VALUES or COUNTS
             end
 
             doc_values["s_#{solr_tag}_#{solr_code}_ssim"] << subfield.value if VALUES

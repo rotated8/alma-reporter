@@ -4,7 +4,7 @@ require 'faraday'
 require 'rsolr'
 
 # File the report will be saved as.
-REPORT_FILE = './report.csv'
+REPORT_FILE = './data.csv'
 
 SOLR_URL = ENV['SOLR_URL'] || 'http://127.0.0.1:8983/solr/alma-data-core'
 # Setup the Faraday connection Solr will use.
