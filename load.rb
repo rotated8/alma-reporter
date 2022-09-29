@@ -7,9 +7,10 @@ require 'nokogiri'
 require 'rsolr'
 
 ################### LOGGING SETUP
-log = Logger.new('./import.log')
+# Check out Ruby's standard library logging module for more documentation.
+log = Logger.new('import.log')
 log.level = Logger::INFO
-log.info('Starting')
+log.debug('Starting')
 
 ################### ALMA CONSTANTS
 ALMA = 'na03'
@@ -46,16 +47,16 @@ RETRY_OPTIONS = {
 MARC::XMLReader.best_available!
 
 # Setup Faraday to retry Alma connection errors. https://github.com/lostisland/faraday-retry
-oai_options = RETRY_OPTIONS.merge({ retry_block: -> (env:, opts:, retries:, exc:, retry_in:) { log.error("Retrying OAI request. #{exc}") } })
+oai_options = RETRY_OPTIONS.merge({ retry_block: -> (env:, options:, retry_count:, exception:, will_retry_in:) { log.error("Retrying OAI request. #{exception}") } })
 oai_conn = Faraday.new do |conn|
   conn.request(:retry, oai_options)
 end
 
 # Setup Faraday to retry for Solr connection errors, too.
-solr_options = RETRY_OPTIONS.merge({ retry_block: -> (env:, opts:, retries:, exc:, retry_in:) { log.error("Retrying Solr request. #{exc}") } })
+solr_options = RETRY_OPTIONS.merge({ retry_block: -> (env:, options:, retry_count:, exception:, will_retry_in:) { log.error("Retrying Solr request. #{exception}") } })
 solr_conn = Faraday.new do |conn|
   conn.request(:retry, solr_options)
-  # conn.ssl.verify = false # Self-signed or expired cert? Uncomment this line.
+  # conn.ssl.verify = false # Self-signed or expired cert? Uncomment this line, get work done.
 end
 solr = RSolr.connect(solr_conn, url: SOLR_URL)
 
@@ -84,23 +85,22 @@ loop do
       log.close
       raise
     end
-    log.info("Deleted records: #{deleted_ids}")
+    log.info("#{deleted_ids.count} records removed")
+    log.debug("Deleted record ids: #{deleted_ids}")
   end
 
   record_count = document.xpath('/oai:OAI-PMH/oai:ListRecords/oai:record', NAMESPACE).count
-  log.info("#{record_count} records found")
+  log.info("#{record_count} records to index")
   if record_count.positive?
     ############### INDEX RECORDS
     # Collect each solr doc from this file.
     docs = []
 
-    # Rather than writing to disk only to read it right back, let's use StringIO
     reader = MARC::XMLReader.new(StringIO.new(document.to_s))
 
     log.debug('Creating solr docs')
     for record in reader
-      # Perf improvement. Makes the fields immutable.
-      record.fields.freeze
+      record.fields.freeze # Perf improvement. Makes the fields immutable.
 
       # Solr doc accumulators. One for data, one for counts. All data fields are multivalued.
       doc_values = Hash.new { |hash, key| hash[key] = [] }
@@ -110,8 +110,8 @@ loop do
         doc_values['id'] = record.fields('001').first.value
       else
         # Record does not have one and only one identifier, use our backup to give it a fake one.
-        log.error('Missing/multiple 001 tags')
-        log.info("001s: #{record.fields('001')} mapped to #{backup_identifier}")
+        # Remember: all the values are stored in `c_001_ssim`, if you store values.
+        log.error("Missing/multiple 001s: #{backup_identifier} used for #{record.fields('001')}")
         doc_values['id'] = backup_identifier
         backup_identifier += 1
       end
@@ -124,25 +124,26 @@ loop do
       for field in record.fields
         # Strip non-alphanumeric characters from the tag. Solr can't handle them in fieldnames.
         solr_tag = field.tag.gsub(/[^A-z0-9]/, '_')
-        log.info("Stripped #{field.tag} for #{id}") if solr_tag != field.tag
+        if solr_tag != field.tag
+          log.info("Stripped #{field.tag} for #{doc_values['id']}")
+          doc_values['escaped_tags'] << field.tag if VALUES or COUNTS
+        end
 
-        # Always count the field as present.
-        doc_counts["f_#{solr_tag}_isi"] += 1 if COUNTS
+        doc_counts["f_#{solr_tag}_isi"] += 1 if COUNTS # Always count the field as present.
 
         if MARC::ControlField.control_tag?(field.tag)
           # Control field, so add the value. No indicators, subfields.
           doc_values["c_#{solr_tag}_ssim"] << field.value if VALUES
         else
-          # Store the unique subfield codes in the this field
+          # Data field, so store the unique subfields and count all of them.
           doc_values["d_#{solr_tag}_ssim"].concat(field.codes).uniq! if VALUES
           doc_counts["d_#{solr_tag}_isi"] += field.codes(dedup=false).count if COUNTS
 
-          # Data fields have indicators and subfields
+          # Data fields may have indicators
           if !field.indicator1.strip.empty?
             doc_values["i_#{solr_tag}_ind1_ssim"] << field.indicator1 if VALUES
             doc_counts["i_#{solr_tag}_ind1_isi"] += 1 if COUNTS
           end
-
           if !field.indicator2.strip.empty?
             doc_values["i_#{solr_tag}_ind2_ssim"] << field.indicator2 if VALUES
             doc_counts["i_#{solr_tag}_ind2_isi"] += 1 if COUNTS
@@ -152,7 +153,10 @@ loop do
           for subfield in field.subfields
             # Strip non-alphanumeric characters from the subfield code, for Solr.
             solr_code = subfield.code.gsub(/[^A-z0-9]/, '_')
-            log.info("Stripped #{subfield.code} for #{id}") if solr_code != subfield.code
+            if solr_code != subfield.code
+              log.info("Stripped #{subfield.code} for a #{solr_tag} in #{doc_values['id']}")
+              doc_values['escaped_codes'] << "#{solr_tag}_#{subfield.code}" if VALUES or COUNTS
+            end
 
             doc_values["s_#{solr_tag}_#{solr_code}_ssim"] << subfield.value if VALUES
             doc_counts["s_#{solr_tag}_#{solr_code}_isi"] += 1 if COUNTS
@@ -188,5 +192,6 @@ loop do
   log.debug('Resuming')
 end
 
-log.info("Finished- #{total_docs} docs loaded in total")
+log.debug("Finished- #{total_docs} docs loaded in total")
+log.debug("Backup identifiers used #{backup_identifier} times")
 log.close
